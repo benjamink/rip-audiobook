@@ -3,14 +3,18 @@
 # make_m4b.sh — turn an audiobook directory into a single self-contained .m4b
 #
 # Usage:
-#   ./make_m4b.sh [DIR] [-b BITRATE] [-o OUTPUT.m4b] [-f]
+#   ./make_m4b.sh [DIR|ZIP] [-b BITRATE] [-o OUTPUT.m4b] [-f]
 #
-#   DIR         Audiobook directory (default: current directory).
+#   DIR|ZIP     Audiobook directory (default: current directory), or a .zip
+#               archive of one. A zip is unpacked to a temporary directory,
+#               used to build the .m4b, then removed; the original zip is
+#               kept untouched.
 #               All audio files found under it are joined, in natural
 #               order (disc2 before disc10, track01 before track02).
 #   -b BITRATE  AAC bitrate for the output (default: 64k, good for
 #               spoken-word mono/stereo).
-#   -o OUTPUT   Output file (default: <DIR-basename>.m4b next to DIR).
+#   -o OUTPUT   Output file (default: <DIR-basename>.m4b next to DIR, or
+#               <ZIP-basename>.m4b next to the zip).
 #   -f          Overwrite the output file if it already exists.
 #
 # Each source audio file becomes one chapter, titled from its embedded
@@ -29,7 +33,7 @@ command -v ffmpeg  >/dev/null 2>&1 || die "ffmpeg not found in PATH"
 command -v ffprobe >/dev/null 2>&1 || die "ffprobe not found in PATH"
 
 # ---- parse arguments --------------------------------------------------------
-DIR=""
+SRC=""
 BITRATE="64k"
 OUTPUT=""
 FORCE=0
@@ -39,17 +43,37 @@ while [ $# -gt 0 ]; do
     -b) BITRATE="${2:?-b needs a value}"; shift 2 ;;
     -o) OUTPUT="${2:?-o needs a value}"; shift 2 ;;
     -f) FORCE=1; shift ;;
-    -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,34p' "$0"; exit 0 ;;
     -*) die "unknown option: $1" ;;
-    *)  [ -z "$DIR" ] && DIR="$1" || die "unexpected argument: $1"; shift ;;
+    *)  if [ -z "$SRC" ]; then SRC="$1"; else die "unexpected argument: $1"; fi; shift ;;
   esac
 done
 
-DIR="${DIR:-.}"
-[ -d "$DIR" ] || die "not a directory: $DIR"
-DIR="$(cd "$DIR" && pwd)"                 # absolute path
-BASENAME="$(basename "$DIR")"
-OUTPUT="${OUTPUT:-$DIR/../$BASENAME.m4b}"
+SRC="${SRC:-.}"
+
+# ---- temp working files -----------------------------------------------------
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+# ---- resolve input: directory or .zip archive -------------------------------
+# For a zip we unpack into $WORK (cleaned up on exit) and default the output
+# next to the original zip, named after it.
+if [ -f "$SRC" ] && printf '%s' "$SRC" | grep -qiE '\.zip$'; then
+  command -v unzip >/dev/null 2>&1 || die "unzip not found in PATH (needed for .zip input)"
+  ZIP="$(cd "$(dirname "$SRC")" && pwd)/$(basename "$SRC")"   # absolute
+  BASENAME="$(basename "$SRC")"; BASENAME="${BASENAME%.[zZ][iI][pP]}"
+  DIR="$WORK/unzipped"
+  mkdir -p "$DIR"
+  printf 'Unpacking %s ...\n' "$ZIP"
+  unzip -q -o "$ZIP" -d "$DIR" || die "failed to unzip: $ZIP"
+  OUTPUT="${OUTPUT:-$(dirname "$ZIP")/$BASENAME.m4b}"
+elif [ -d "$SRC" ]; then
+  DIR="$(cd "$SRC" && pwd)"                 # absolute path
+  BASENAME="$(basename "$DIR")"
+  OUTPUT="${OUTPUT:-$DIR/../$BASENAME.m4b}"
+else
+  die "not a directory or .zip file: $SRC"
+fi
 
 if [ -e "$OUTPUT" ] && [ "$FORCE" -ne 1 ]; then
   die "output exists: $OUTPUT (use -f to overwrite)"
@@ -75,8 +99,6 @@ for name in cover folder front albumart; do
 done
 
 # ---- temp working files -----------------------------------------------------
-WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
 CONCAT="$WORK/concat.txt"
 FFMETA="$WORK/meta.txt"
 
