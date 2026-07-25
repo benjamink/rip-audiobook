@@ -1,10 +1,15 @@
 # rip-audiobook
 
-Single-file bash script (`rip-audiobook.sh`) that rips multi-disc audiobook
-CDs to tagged MP3s using `cdparanoia` + `lame` + `id3v2`. See README.md for
-usage.
+Two bash scripts for producing audiobooks from CDs. See README.md for usage.
+
+- `rip-audiobook.sh` — rips multi-disc audiobook CDs to tagged MP3s using
+  `cdparanoia` + `lame` + `id3v2`.
+- `make-m4b.sh` — packages a ripped `<Author>-<Title>/disc<N>/track<NN>.mp3`
+  directory into a single chaptered `.m4b` using only `ffmpeg`/`ffprobe`.
 
 ## Structure
+
+### rip-audiobook.sh
 
 Everything lives in `rip-audiobook.sh`:
 
@@ -16,6 +21,21 @@ Everything lives in `rip-audiobook.sh`:
   encodes each to mp3 with lame, tags with id3v2, ejects
 - `main` — arg parsing, then loops `rip_disc` over increasing disc numbers
   until the user quits (`Q` at the prompt)
+
+### make-m4b.sh
+
+Everything lives in `make-m4b.sh`:
+
+- gathers audio files under the target dir with `find ... -print0 | sort -z -V`
+  (natural order, so `disc2` < `disc10`, `track01` < `track02`)
+- reads per-file duration + `title` tag via `ffprobe` to build an ffmetadata
+  file with one `[CHAPTER]` block per track (`TIMEBASE=1/1000`)
+- builds a concat-demuxer list and runs a single `ffmpeg` invocation:
+  `-f concat` input + ffmetadata input, `-map_metadata`/`-map_chapters` from
+  the metadata input, re-encode to `aac`, optional cover as `attached_pic`,
+  `-movflags +faststart`, `-f mp4`
+- book-level tags (title/album/artist/genre/date) come from the first file;
+  `media_type=2` marks it as an audiobook
 
 ## Conventions
 
